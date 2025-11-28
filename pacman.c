@@ -38,7 +38,6 @@ int game_over = 0;
 int score = 0;
 int paused = 0;
 int mouse = 0;
-int temp = 0;
 
 volatile sig_atomic_t quit_flag = 0;
 volatile sig_atomic_t pause_flag = 0;
@@ -59,11 +58,12 @@ char map[HEIGHT][WIDTH+1] = {
 int px = 2, py = 2;  // 팩맨 초기 위치
 
 void draw_map() {
-    for(int i=0;i<HEIGHT;i++)
+    for(int i=0;i<HEIGHT;i++){
         mvprintw(i, 0, "%s", map[i]);
-
     }
-    void draw_status(){
+}
+
+void draw_status(){
     mvprintw(HEIGHT, 0, "Score: %d", score);
     mvprintw(HEIGHT+1, 0, "Move: WASD | Quit: Ctrl+C | Pause: P");
 }
@@ -85,6 +85,7 @@ int is_wall(int y, int x) {
     if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return 1;
     return map[y][x] == '#';
 }
+
 int near_pacman() {
     return abs(ghost1.x - pacman.x) + abs(ghost1.y - pacman.y) <= 8;
 }
@@ -126,7 +127,9 @@ void draw_pacman(){
         px = pacman.x;
         py = pacman.y;
     }
-}void move_pacman() {
+}
+
+void move_pacman() {
     int next_x = pacman.x;
     int next_y = pacman.y;
 
@@ -255,7 +258,6 @@ void handle_input(){
 
 int main() {
     init_game();
-    initscr();
     noecho();
     curs_set(FALSE);
     keypad(stdscr, TRUE);
