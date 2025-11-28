@@ -118,8 +118,7 @@ void draw_pacman(){
 
     static int frame = 0;
     frame++;
-    mouse = frame % 2;
-    mvprintw(pacman.y, pacman.x, mouse ? "c" : "C");
+    mvprintw(pacman.y, pacman.x, (frame % 2) ? "c" : "C");
 
     // 벽 충돌 확인
     if (map[pacman.y][pacman.x] != '#') {
