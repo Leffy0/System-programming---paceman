@@ -18,7 +18,7 @@ position pacman;
 position ghost1;
 direction dir = right;
 int mouse = 0;
-int temp = 0;
+int ghost_dir = 0;
 int food_arr[WIDTH][HEIGHT];
 
 void init_game()
@@ -87,12 +87,12 @@ void draw_food()
 
 void chase_pacman()
 {
-    if(ghost1.x > pacman.x) temp = 1;
-    else if (ghost1.x < pacman.x) temp = 0;
+    if(ghost1.x > pacman.x) ghost_dir = 1;
+    else if (ghost1.x < pacman.x) ghost_dir = 0;
     else
     {
-        if(ghost1.y > pacman.y) temp = 3;
-        else if (ghost1.y < pacman.y) temp = 2;
+        if(ghost1.y > pacman.y) ghost_dir = 3;
+        else if (ghost1.y < pacman.y) ghost_dir = 2;
     }
 }
 
