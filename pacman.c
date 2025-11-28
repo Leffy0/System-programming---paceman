@@ -62,8 +62,8 @@ void draw_map() {
     for(int i=0;i<HEIGHT;i++)
         mvprintw(i, 0, "%s", map[i]);
 
-    }
-    void draw_status(){
+}
+void draw_status(){
     mvprintw(HEIGHT, 0, "Score: %d", score);
     mvprintw(HEIGHT+1, 0, "Move: WASD | Quit: Ctrl+C | Pause: P");
 }
