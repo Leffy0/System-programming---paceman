@@ -86,7 +86,7 @@ int is_wall(int y, int x) {
     return map[y][x] == '#';
 }
 int near_pacman() {
-    return abs(ghost1.x - pacman.x) + abs(ghost1.y - pacman.y) <= 8;
+    return abs(ghost1.x - pacman.x) + abs(ghost1.y - pacman.y) <= GHOST_TRACKING_DISTANCE;
 }
 
 
