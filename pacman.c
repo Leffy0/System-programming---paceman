@@ -51,7 +51,7 @@ int px = 2, py = 2;  // 팩맨 초기 위치
 
 void draw_map() {
     for(int i=0;i<HEIGHT;i++)
-        mvprintw(i, 0, "%s", map[i]);
+        mvprintw(i, 0, "%s\n", map[i]);
 
     }void draw_status(){
     mvprintw(HEIGHT, 0, "Score: %d", score);
