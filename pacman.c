@@ -148,7 +148,12 @@ void input_map()
     for (int i = 0; i < HEIGHT; i++) {
         for (int j = 0; j < WIDTH + 1; j++) {
             if (map[i][j] == '#') food_check[i][j] = 2;
-            else if (map[i][j] == ' ') food_check[i][j] = 1;
+            else if (map[i][j] == ' ')
+            {
+                if(((4 < i && i < 11) && (9 < j && j < 19)) || (i == 9 && !(j == 8 || j == 20)))
+                { food_check[i][j] = 0; }
+                else { food_check[i][j] = 1; }
+            }
         }
     }
 }
@@ -191,7 +196,7 @@ void init_game(){
     signal(SIGTSTP, sig_handler);
 
     pacman.x = 14;
-    pacman.y = 15;
+    pacman.y = 14;
     dir = RIGHT;
 
     ghost1.x = 12;
@@ -218,8 +223,8 @@ void move_pacman() {
     int next_x = pacman.x;
     int next_y = pacman.y;
 
-    if(pacman.x == 0 && pacman.y == 9) { pacman.x = 28; }
-    if(pacman.x == 28 && pacman.y == 9) { pacman.x = 0; }
+    if(pacman.x == 1 && pacman.y == 9) { next_x = 28; }
+    if(pacman.x == 28 && pacman.y == 9) { next_x = 1; }
 
     // 1. 현재 방향에 따라 다음에 이동할 임시 좌표 계산
     switch (dir) {
@@ -280,7 +285,7 @@ void handle_input(){
 void ghost1_move()
 {
     // 속도 조절 (예: 3틱마다 1번 이동 - 좀 더 빠르게 쫓아오게 하려면 숫자를 줄이세요)
-    if(tick % 3 != 0) {
+    if(tick % 5 != 0) {
         mvprintw(ghost1.y, ghost1.x, "A");
         return;
     }
