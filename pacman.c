@@ -44,6 +44,7 @@ Position ghost3;
 int ghost3_dir = 0;
 Position ghost4;
 int ghost4_dir = 0;
+
 Direction dir = RIGHT;
 Position food;
 
@@ -55,6 +56,8 @@ int tick = 0;
 
 int cherry_time = 0;
 time_t cherry_start_time;
+Point cherries[4] = { {1, 2}, {27, 2}, {1, 14}, {27, 14} };
+int cherry_eaten[4] = {0, 0, 0, 0};
 
 volatile sig_atomic_t quit_flag = 0;
 volatile sig_atomic_t pause_flag = 0;
@@ -191,7 +194,20 @@ void draw_food() {
     for (int i = 0; i < HEIGHT; i++) {
         for (int j = 0; j < WIDTH + 1; j++) {
             if (food_check[i][j] != 1) continue;
-            if ((j == 1 || j == 27) && (i == 2 || i == 14)) { mvprintw(i, j, "%c", '%'); }
+
+            int is_cherry = 0;
+
+            // 좌표 체리 체크
+            for (int k = 0; k < 4; k++) {
+                if (!cherry_eaten[k] &&
+                    cherries[k].x == j &&
+                    cherries[k].y == i) {
+                    is_cherry = 1;
+                    break;
+                }
+            }
+
+            if (is_cherry) { mvprintw(i, j, "%c", '%'); }
             else { mvprintw(i, j, "."); }
         }
     }
@@ -217,19 +233,10 @@ void sig_handler(int sig) {
     }
 }
 
-
-void init_game(){
-    initscr();          //Initialize ncurses mode
-    noecho();           //Disable automatioc echoing of typed characters
-    curs_set(FALSE);    //Hide the cursor
-    timeout(100);       //Set input timeout(non-blocking getch)
-    srand(time(NULL));  //Seed the random number generator
-    signal(SIGINT, sig_handler);
-    signal(SIGTSTP, sig_handler);
-
+void init_game() {
     pacman.x = 14;
     pacman.y = 14;
-    dir = RIGHT;
+    dir = DOWN;
 
     ghost1.x = 12;
     ghost1.y = 9;
@@ -242,6 +249,17 @@ void init_game(){
     ghost3.x = 12;
     ghost3.y = 10;
     ghost3_dir = 2;
+
+    score = 0;
+    game_over = 0;
+    paused = 0;
+
+    cherry_time = 0;
+    for (int k = 0; k < 4; k++) cherry_eaten[k] = 0;
+
+    ghost1_has_target = 0;
+    ghost2_has_target = 0;
+    ghost3_has_target = 0;
 }
 
 void end_game(const char *message){
@@ -299,6 +317,15 @@ void move_pacman() {
 
     if(food_check[py][px] == 1) score++;
 
+    for (int k = 0; k < 4; k++) {
+        if (!cherry_eaten[k] && pacman.x == cherries[k].x && pacman.y == cherries[k].y)
+        {
+            cherry_eaten[k] = 1;
+            cherry_time = 1;
+            time(&cherry_start_time);
+        }
+    }
+
     food_check[py][px] = 0;
 }
 
@@ -323,115 +350,203 @@ void handle_input(){
         break;
     }
 }
+
+void draw_ghost(Position ghost)
+{
+    if (cherry_time) {
+        attron(COLOR_PAIR(2));
+        mvprintw(ghost.y, ghost.x, "a");
+        attroff(COLOR_PAIR(2));
+    }
+
+    else {
+        attron(COLOR_PAIR(1));
+        mvprintw(ghost.y, ghost.x, "A");
+        attroff(COLOR_PAIR(1));
+    }
+}
+
 void ghost1_move()
 {
-    // 속도 조절 (예: 5틱마다 1번 이동)
+    // 충돌 체크
+    if (ghost1.x == pacman.x && ghost1.y == pacman.y)
+    {
+        if (cherry_time)
+        {
+            // 먹혔으면 리스폰
+            ghost1.x = 12;
+            ghost1.y = 9;
+            ghost1_has_target = 0;
+        }
+        else {
+            game_over = 1;
+        }
+    }
+
     if (tick % 5 != 0) {
-        mvprintw(ghost1.y, ghost1.x, "A");
+        draw_ghost(ghost1);
+
         return;
     }
 
     Point ghost_pos = {ghost1.x, ghost1.y};
     Point pacman_pos = {pacman.x, pacman.y};
-
     Point next_pos;
 
-    // 5×5 안에 팩맨이 있으면 → 팩맨 추적 모드
-    if (in_chase_range(ghost_pos, pacman_pos)) {
-        next_pos = get_next_move_bfs(ghost_pos, pacman_pos);
-    } else {
-        // 추적 범위 밖이면 → 랜덤 목표 모드
-
-        // 아직 목표가 없거나, 이미 목표에 도착했다면 새로운 랜덤 목표 뽑기
+    if (cherry_time)
+    {
+        // 체리 타임: 랜덤 도망
         if (!ghost1_has_target ||
-            (ghost1.x == ghost1_target.x && ghost1.y == ghost1_target.y)) {
+            (ghost1.x == ghost1_target.x && ghost1.y == ghost1_target.y))
+        {
             ghost1_target = get_random_target();
             ghost1_has_target = 1;
         }
-
-        // 그 목표를 향해서 BFS
         next_pos = get_next_move_bfs(ghost_pos, ghost1_target);
+    }
+    else
+    {
+        // 평소 로직
+        if (in_chase_range(ghost_pos, pacman_pos))
+        {
+            next_pos = get_next_move_bfs(ghost_pos, pacman_pos);
+        }
+        else
+        {
+            if (!ghost1_has_target ||
+                (ghost1.x == ghost1_target.x && ghost1.y == ghost1_target.y))
+            {
+                ghost1_target = get_random_target();
+                ghost1_has_target = 1;
+            }
+            next_pos = get_next_move_bfs(ghost_pos, ghost1_target);
+        }
     }
 
     // 이동 적용
     ghost1.x = next_pos.x;
     ghost1.y = next_pos.y;
 
-    // 충돌 체크
-    if (ghost1.x == pacman.x && ghost1.y == pacman.y) game_over = 1;
-
-    // 유령 그리기
-    mvprintw(ghost1.y, ghost1.x, "A");
+    // 유령 그리기 (색/문자는 draw_ghost가 처리)
+    draw_ghost(ghost1);
 }
 
 void ghost2_move()
 {
-    // 속도 조절 (예: 5틱마다 1번 이동, 살짝 타이밍 다르게)
+    if (ghost2.x == pacman.x && ghost2.y == pacman.y)
+    {
+        if (cherry_time)
+        {
+            ghost2.x = 17;
+            ghost2.y = 9;
+            ghost2_has_target = 0;
+        }
+        else {
+            game_over = 1;
+        }
+    }
+
     if (tick % 5 != 1) {
-        mvprintw(ghost2.y, ghost2.x, "A");
+        draw_ghost(ghost2);
         return;
     }
 
     Point ghost_pos = {ghost2.x, ghost2.y};
     Point pacman_pos = {pacman.x, pacman.y};
-
     Point next_pos;
 
-    if (in_chase_range(ghost_pos, pacman_pos)) {
-        // 가까우면 팩맨 추적
-        next_pos = get_next_move_bfs(ghost_pos, pacman_pos);
-    } else {
-        // 멀면 랜덤 목표
+    if (cherry_time)
+    {
+        // 체리 타임: 랜덤 도망
         if (!ghost2_has_target ||
-            (ghost2.x == ghost2_target.x && ghost2.y == ghost2_target.y)) {
+            (ghost2.x == ghost2_target.x && ghost2.y == ghost2_target.y))
+        {
             ghost2_target = get_random_target();
             ghost2_has_target = 1;
         }
-
         next_pos = get_next_move_bfs(ghost_pos, ghost2_target);
+    }
+    else
+    {
+        // 평소 로직
+        if (in_chase_range(ghost_pos, pacman_pos))
+        {
+            next_pos = get_next_move_bfs(ghost_pos, pacman_pos);
+        }
+        else
+        {
+            if (!ghost2_has_target ||
+                (ghost2.x == ghost2_target.x && ghost2.y == ghost2_target.y))
+            {
+                ghost2_target = get_random_target();
+                ghost2_has_target = 1;
+            }
+            next_pos = get_next_move_bfs(ghost_pos, ghost2_target);
+        }
     }
 
     ghost2.x = next_pos.x;
     ghost2.y = next_pos.y;
 
-    if (ghost2.x == pacman.x && ghost2.y == pacman.y) game_over = 1;
-
-    mvprintw(ghost2.y, ghost2.x, "A");
+    draw_ghost(ghost2);
 }
 
 void ghost3_move()
 {
-    // 속도 조절 (예: 5틱마다 1번 이동, 살짝 타이밍 다르게)
+    if (ghost3.x == pacman.x && ghost3.y == pacman.y)
+    {
+        if (cherry_time)
+        {
+            ghost3.x = 12;
+            ghost3.y = 10;
+            ghost3_has_target = 0;
+        }
+        else {
+            game_over = 1;
+        }
+    }
+
     if (tick != 0) {
-        mvprintw(ghost3.y, ghost3.x, "A");
+        draw_ghost(ghost3);
         return;
     }
 
     Point ghost_pos = {ghost3.x, ghost3.y};
     Point pacman_pos = {pacman.x, pacman.y};
-
     Point next_pos;
 
-    if (in_chase_range(ghost_pos, pacman_pos)) {
-        // 가까우면 팩맨 추적
-        next_pos = get_next_move_bfs(ghost_pos, pacman_pos);
-    } else {
-        // 멀면 랜덤 목표
+    if (cherry_time)
+    {
         if (!ghost3_has_target ||
-            (ghost3.x == ghost3_target.x && ghost3.y == ghost3_target.y)) {
+            (ghost3.x == ghost3_target.x && ghost3.y == ghost3_target.y))
+        {
             ghost3_target = get_random_target();
             ghost3_has_target = 1;
         }
-
         next_pos = get_next_move_bfs(ghost_pos, ghost3_target);
+    }
+    else
+    {
+        if (in_chase_range(ghost_pos, pacman_pos))
+        {
+            next_pos = get_next_move_bfs(ghost_pos, pacman_pos);
+        }
+        else
+        {
+            if (!ghost3_has_target ||
+                (ghost3.x == ghost3_target.x && ghost3.y == ghost3_target.y))
+            {
+                ghost3_target = get_random_target();
+                ghost3_has_target = 1;
+            }
+            next_pos = get_next_move_bfs(ghost_pos, ghost3_target);
+        }
     }
 
     ghost3.x = next_pos.x;
     ghost3.y = next_pos.y;
 
-    if (ghost3.x == pacman.x && ghost3.y == pacman.y) game_over = 1;
-
-    mvprintw(ghost3.y, ghost3.x, "A");
+    draw_ghost(ghost3);
 }
 
 void check_cherry_time()
@@ -447,12 +562,27 @@ void check_cherry_time()
 
 int main() {
     input_map();
-    init_game();
+
     initscr();
+    cbreak();
     noecho();
     curs_set(FALSE);
     keypad(stdscr, TRUE);
-    timeout(100);   // non-blocking 입력
+
+    timeout(50);
+
+    if (has_colors()) {
+        start_color();
+        use_default_colors();
+        init_pair(1, COLOR_RED,  COLOR_BLACK); // 평소 유령
+        init_pair(2, COLOR_CYAN, COLOR_BLACK); // 체리타임 유령
+    }
+
+    srand(time(NULL));
+    signal(SIGINT,  sig_handler); // 종료 시그널
+    signal(SIGTSTP, sig_handler); // 일시정지 시그널
+
+    init_game();   // non-blocking 입력
 
     while(!game_over)
     {
@@ -461,33 +591,31 @@ int main() {
         if (quit_flag) {
             mvprintw(HEIGHT / 2, (WIDTH / 2) - 14, "Are you sure you want to quit? (y/n):");
             refresh();
-            timeout(-1); // 입력을 무한정 기다림 (blocking)
+            timeout(-1);
             char c = getch();
-            timeout(100); // 다시 원래대로 (non-blocking)
-            flushinp(); // 입력 버퍼 비우기
-            if (c == 'y' || c == 'Y') {
-                end_game("Terminated by user.");
-            }
-            quit_flag = 0; // 'n'을 눌렀으면 플래그를 리셋하고 게임 계속
+            timeout(100);
+            flushinp();
+            if (c == 'y' || c == 'Y') { end_game("Terminated by user."); }
+            quit_flag = 0;
         }
         if (pause_flag) {
             paused = !paused;
-            pause_flag = 0; // 플래그 처리 후 즉시 리셋
+            pause_flag = 0;
         }
         if(paused){
-        clear();
-        draw_pacman();
-        ghost1_move();
-        ghost2_move();
-        ghost3_move();
-        draw_status();
-        mvprintw(HEIGHT / 2, (WIDTH / 2) - 5, "== PAUSED ==");
-        mvprintw(HEIGHT / 2 + 1, (WIDTH / 2) - 12, "Press 'p' or Ctrl+Z to resume");
-        refresh();
-        handle_input(); // 일시정지 중에도 'p' 키나 Ctrl+Z로 해제 가능하도록
-        continue; // 일시정지 상태에서는 아래 로직 실행 안 함
+            clear();
+            draw_pacman();
+            ghost1_move();
+            ghost2_move();
+            ghost3_move();
+            draw_status();
+            mvprintw(HEIGHT / 2, (WIDTH / 2) - 5, "== PAUSED ==");
+            mvprintw(HEIGHT / 2 + 1, (WIDTH / 2) - 12, "Press 'p' or Ctrl+Z to resume");
+            refresh();
+            handle_input(); // 일시정지 해제
+            continue;
 
-    }
+        }
         clear();
         draw_map();
         draw_pacman();
@@ -496,7 +624,7 @@ int main() {
         ghost3_move();
         draw_status();
         check_cherry_time();
-        handle_input();     //Process user input
+        handle_input();
 
         if(!paused){
             move_pacman();
