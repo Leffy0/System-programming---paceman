@@ -8,13 +8,24 @@
 #define HEIGHT 20
 #define WIDTH 29
 
+typedef struct
+{ int x,y; }Position;
+
 void init_game();
 void sig_handler(int sig);
 void draw_status();
 void draw_pacman();
 void move_pacman();
-void handle_input();
+void handle_input(int ch);
 void end_game(const char *message);
+void end_ncurses();
+void ghost1_move();
+void ghost2_move();
+void ghost3_move();
+void draw_ghost(Position ghost);
+void check_cherry_time();
+int resolve_collision(Position *ghost, int respawn_x, int respawn_y, int *has_target);
+int prompt_quit();
 
 typedef struct { int x, y; } Point;
 
@@ -30,20 +41,11 @@ bool is_empty() { return front == rear; }
 
 void reset_queue() { front = rear = 0; }
 
-typedef struct
-{ int x,y; }Position;
 
 typedef enum {UP, DOWN, LEFT, RIGHT} Direction;
 
 Position pacman;
-Position ghost1;
-int ghost1_dir = 0;
-Position ghost2;
-int ghost2_dir = 0;
-Position ghost3;
-int ghost3_dir = 0;
-Position ghost4;
-int ghost4_dir = 0;
+Position ghost1, ghost2, ghost3;
 
 Direction dir = RIGHT;
 Position food;
@@ -66,18 +68,18 @@ char map[HEIGHT][WIDTH+2];
 
 int px = 2, py = 2;
 
-Point ghost1_target;
-int ghost1_has_target = 0;
-Point ghost2_target;
-int ghost2_has_target = 0;
+Point ghost1_target, ghost2_target, ghost3_target;
 
-Point ghost3_target;
-int ghost3_has_target = 0;
-Point ghost4_target;
-int ghost4_has_target = 0;
+int ghost1_has_target = 0, ghost2_has_target = 0, ghost3_has_target = 0;
+
 
 
 Point get_next_move_bfs(Point ghost, Point target) {
+    // 시작과 목표가 같으면 부모 경로가 없으니 바로 반환
+    if (ghost.x == target.x && ghost.y == target.y) {
+        return ghost;
+    }
+
     bool visited[HEIGHT][WIDTH];
     Point parent[HEIGHT][WIDTH];
 
@@ -164,6 +166,58 @@ Point get_random_target() {
     }
 }
 
+void init_global_state() {
+    score = 0;
+    game_over = 0;
+    paused = 0;
+    quit_flag = 0;
+    pause_flag = 0;
+    tick = 0;
+
+    cherry_time = 0;
+    for (int i = 0; i < 4; i++) cherry_eaten[i] = 0;
+}
+
+void init_ncurses() {
+    initscr();
+    noecho();
+    cbreak();
+    curs_set(FALSE);
+    keypad(stdscr, TRUE);
+    timeout(50);
+
+    if (has_colors()) {
+        start_color();
+        use_default_colors();
+        init_pair(1, COLOR_RED,  COLOR_BLACK); // ghost normal
+        init_pair(2, COLOR_CYAN, COLOR_BLACK); // ghost scared
+    }
+}
+
+int show_menu() {
+    while (1) {
+        clear();
+        mvprintw(5, 10, "====== PAC-MAN ======");
+        mvprintw(7, 10, "1. Single Player");
+        mvprintw(8, 10, "2. Two Players");
+        mvprintw(10, 10, "Select (1/2): ");
+        refresh();
+
+        int ch = getch();
+        if (quit_flag) {
+            end_ncurses();
+            printf("Terminated.\n");
+            exit(0);
+        }
+        if (ch == '1') return 1;
+        if (ch == '2') return 2;
+    }
+}
+
+void end_ncurses() {
+    endwin();
+}
+
 void input_map()
 {
     FILE* f = fopen("map.txt", "r");
@@ -179,6 +233,7 @@ void input_map()
 
     for (int i = 0; i < HEIGHT; i++) {
         for (int j = 0; j < WIDTH + 1; j++) {
+            food_check[i][j] = 0;
             if (map[i][j] == '#') food_check[i][j] = 2;
             else if (map[i][j] == ' ')
             {
@@ -222,6 +277,9 @@ void draw_status()
 {
     mvprintw(HEIGHT, 0, "Score: %d", score);
     mvprintw(HEIGHT+1, 0, "Move: WASD | Quit: Ctrl+C | Pause: P");
+    if (paused) {
+        mvprintw(HEIGHT+2, 0, "Game Paused. Press P to resume.");
+    }
 }
 
 void sig_handler(int sig) {
@@ -233,6 +291,153 @@ void sig_handler(int sig) {
     }
 }
 
+int prompt_quit() {
+    timeout(-1); // 블로킹 모드
+    mvprintw(HEIGHT / 2, (WIDTH / 2) - 10, "Quit? (y/n): ");
+    refresh();
+
+    while (1) {
+        int c = getch();
+        if (c == 'y' || c == 'Y') {
+            timeout(50);
+            return 1;
+        } else if (c == 'n' || c == 'N') {
+            timeout(50);
+            return 0;
+        }
+    }
+}
+
+void run_single_player() {
+    input_map();
+    init_global_state();
+    init_game();
+
+    while (!game_over) {
+        tick = !tick;
+
+        if (quit_flag) {
+            if (prompt_quit()) end_game("Terminated.");
+            quit_flag = 0;
+        }
+
+        if (pause_flag) {
+            paused = !paused;
+            pause_flag = 0;
+        }
+
+        clear();
+        draw_map();
+        draw_pacman();
+
+        if (paused) {
+            draw_ghost(ghost1);
+            draw_ghost(ghost2);
+            draw_ghost(ghost3);
+            draw_status();
+            int ch = getch();
+            handle_input(ch);
+            refresh();
+            usleep(80000);
+            continue;
+        }
+
+        ghost1_move();
+        ghost2_move();
+        ghost3_move();
+        draw_status();
+
+        int ch = getch();
+        handle_input(ch);
+        check_cherry_time();
+
+        if (!paused)
+            move_pacman();
+
+        // 팩맨 이동 이후 충돌 재검사
+        resolve_collision(&ghost1, 12, 9, &ghost1_has_target);
+        resolve_collision(&ghost2, 17, 9, &ghost2_has_target);
+        resolve_collision(&ghost3, 12, 10, &ghost3_has_target);
+
+        refresh();
+        usleep(80000);
+    }
+
+    end_game("Game Over!");
+}
+
+void run_two_player() {
+    input_map();
+    init_global_state();
+    init_game();
+
+    Position pacman2 = { pacman.x + 1, pacman.y }; // P2 시작 위치
+
+    while (!game_over) {
+        tick = !tick;
+
+        if (quit_flag) {
+            if (prompt_quit()) end_game("Terminated.");
+            quit_flag = 0;
+        }
+        if (pause_flag) {
+            paused = !paused;
+            pause_flag = 0;
+        }
+
+        clear();
+        draw_map();
+        
+        draw_pacman();      // Player 1
+        mvprintw(pacman2.y, pacman2.x, "Q");   // Player 2
+
+        if (paused) {
+            draw_ghost(ghost1);
+            draw_ghost(ghost2);
+            draw_ghost(ghost3);
+            draw_status();
+            int ch = getch();
+            handle_input(ch);
+            refresh();
+            usleep(80000);
+            continue;
+        }
+
+        ghost1_move();
+        ghost2_move();
+        ghost3_move();
+        draw_status();
+
+        int ch = getch();
+        handle_input(ch);
+
+        int next_x = pacman2.x;
+        int next_y = pacman2.y;
+        switch (ch) {
+            case KEY_UP:    next_y--; break;
+            case KEY_DOWN:  next_y++; break;
+            case KEY_LEFT:  next_x--; break;
+            case KEY_RIGHT: next_x++; break;
+        }
+
+        if (next_x == 0 && pacman2.y == 9) next_x = WIDTH - 1;
+        else if (next_x == WIDTH && pacman2.y == 9) next_x = 1;
+
+        if (next_x >= 0 && next_x < WIDTH && next_y >= 0 && next_y < HEIGHT) {
+            if (map[next_y][next_x] == ' ' || map[next_y][next_x] == '|') {
+                pacman2.x = next_x;
+                pacman2.y = next_y;
+            }
+        }
+
+        refresh();
+        usleep(80000);
+    }
+
+    end_game("Game Over!");
+}
+
+
 void init_game() {
     pacman.x = 14;
     pacman.y = 14;
@@ -240,15 +445,11 @@ void init_game() {
 
     ghost1.x = 12;
     ghost1.y = 9;
-    ghost1_dir = 0;
-
     ghost2.x = 17;
     ghost2.y = 9;
-    ghost2_dir = 1;
 
     ghost3.x = 12;
     ghost3.y = 10;
-    ghost3_dir = 2;
 
     score = 0;
     game_over = 0;
@@ -330,8 +531,7 @@ void move_pacman() {
 }
 
 
-void handle_input(){
-    int ch = getch();
+void handle_input(int ch){
     switch (ch){
     case 'w':
         dir = UP;
@@ -366,22 +566,23 @@ void draw_ghost(Position ghost)
     }
 }
 
+int resolve_collision(Position *ghost, int respawn_x, int respawn_y, int *has_target)
+{
+    if (ghost->x != pacman.x || ghost->y != pacman.y) return 0;
+
+    if (cherry_time) {
+        ghost->x = respawn_x;
+        ghost->y = respawn_y;
+        if (has_target) *has_target = 0;
+    } else {
+        game_over = 1;
+    }
+    return 1;
+}
+
 void ghost1_move()
 {
-    // 충돌 체크
-    if (ghost1.x == pacman.x && ghost1.y == pacman.y)
-    {
-        if (cherry_time)
-        {
-            // 먹혔으면 리스폰
-            ghost1.x = 12;
-            ghost1.y = 9;
-            ghost1_has_target = 0;
-        }
-        else {
-            game_over = 1;
-        }
-    }
+    resolve_collision(&ghost1, 12, 9, &ghost1_has_target);
 
     if (tick % 5 != 0) {
         draw_ghost(ghost1);
@@ -427,24 +628,14 @@ void ghost1_move()
     ghost1.x = next_pos.x;
     ghost1.y = next_pos.y;
 
+    resolve_collision(&ghost1, 12, 9, &ghost1_has_target);
     // 유령 그리기 (색/문자는 draw_ghost가 처리)
     draw_ghost(ghost1);
 }
 
 void ghost2_move()
 {
-    if (ghost2.x == pacman.x && ghost2.y == pacman.y)
-    {
-        if (cherry_time)
-        {
-            ghost2.x = 17;
-            ghost2.y = 9;
-            ghost2_has_target = 0;
-        }
-        else {
-            game_over = 1;
-        }
-    }
+    resolve_collision(&ghost2, 17, 9, &ghost2_has_target);
 
     if (tick % 5 != 1) {
         draw_ghost(ghost2);
@@ -488,23 +679,13 @@ void ghost2_move()
     ghost2.x = next_pos.x;
     ghost2.y = next_pos.y;
 
+    resolve_collision(&ghost2, 17, 9, &ghost2_has_target);
     draw_ghost(ghost2);
 }
 
 void ghost3_move()
 {
-    if (ghost3.x == pacman.x && ghost3.y == pacman.y)
-    {
-        if (cherry_time)
-        {
-            ghost3.x = 12;
-            ghost3.y = 10;
-            ghost3_has_target = 0;
-        }
-        else {
-            game_over = 1;
-        }
-    }
+    resolve_collision(&ghost3, 12, 10, &ghost3_has_target);
 
     if (tick != 0) {
         draw_ghost(ghost3);
@@ -546,6 +727,7 @@ void ghost3_move()
     ghost3.x = next_pos.x;
     ghost3.y = next_pos.y;
 
+    resolve_collision(&ghost3, 12, 10, &ghost3_has_target);
     draw_ghost(ghost3);
 }
 
@@ -558,84 +740,23 @@ void check_cherry_time()
             cherry_time = 0;    // 10초 지나면 체리 효과 꺼짐
         }
     }
+
 }
 
+
 int main() {
-    input_map();
-
-    initscr();
-    cbreak();
-    noecho();
-    curs_set(FALSE);
-    keypad(stdscr, TRUE);
-
-    timeout(50);
-
-    if (has_colors()) {
-        start_color();
-        use_default_colors();
-        init_pair(1, COLOR_RED,  COLOR_BLACK); // 평소 유령
-        init_pair(2, COLOR_CYAN, COLOR_BLACK); // 체리타임 유령
-    }
-
     srand(time(NULL));
-    signal(SIGINT,  sig_handler); // 종료 시그널
+    signal(SIGINT, sig_handler); // 종료 시그널
     signal(SIGTSTP, sig_handler); // 일시정지 시그널
+    init_ncurses();
 
-    init_game();   // non-blocking 입력
+    int mode = show_menu();
 
-    while(!game_over)
-    {
-        tick = !tick;
-        draw_map();
-        if (quit_flag) {
-            mvprintw(HEIGHT / 2, (WIDTH / 2) - 14, "Are you sure you want to quit? (y/n):");
-            refresh();
-            timeout(-1);
-            char c = getch();
-            timeout(100);
-            flushinp();
-            if (c == 'y' || c == 'Y') { end_game("Terminated by user."); }
-            quit_flag = 0;
-        }
-        if (pause_flag) {
-            paused = !paused;
-            pause_flag = 0;
-        }
-        if(paused){
-            clear();
-            draw_pacman();
-            ghost1_move();
-            ghost2_move();
-            ghost3_move();
-            draw_status();
-            mvprintw(HEIGHT / 2, (WIDTH / 2) - 5, "== PAUSED ==");
-            mvprintw(HEIGHT / 2 + 1, (WIDTH / 2) - 12, "Press 'p' or Ctrl+Z to resume");
-            refresh();
-            handle_input(); // 일시정지 해제
-            continue;
+    if (mode == 1)
+        run_single_player();
+    else
+        run_two_player();
 
-        }
-        clear();
-        draw_map();
-        draw_pacman();
-        ghost1_move();
-        ghost2_move();
-        ghost3_move();
-        draw_status();
-        check_cherry_time();
-        handle_input();
-
-        if(!paused){
-            move_pacman();
-        }
-
-        if(score == 257) game_over = 1;
-
-        refresh();
-        usleep(80000);
-    }
-
-    end_game("Game Over!");
+    end_ncurses();
     return 0;
 }
