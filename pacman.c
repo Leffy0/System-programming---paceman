@@ -4,6 +4,14 @@
 #include <unistd.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <string.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <sys/select.h>
 
 #define HEIGHT 20
 #define WIDTH 29
@@ -18,6 +26,7 @@ void draw_pacman();
 void move_pacman();
 void handle_input(int ch);
 void end_game(const char *message);
+void run_server(int port);
 void init_food_count();
 void try_eat_tile(int y, int x);
 void check_win();
@@ -29,6 +38,9 @@ void draw_ghost(Position ghost);
 void check_cherry_time();
 int resolve_collision(Position *ghost, int respawn_x, int respawn_y, int *has_target);
 int prompt_quit();
+int set_nonblock(int fd);
+void send_state_to_clients();
+void process_client_input(int player_id, int keycode);
 
 typedef struct { int x, y; } Point;
 
@@ -58,6 +70,7 @@ int score = 0;
 int paused = 0;
 int food_check[HEIGHT][WIDTH + 2];
 int tick = 0;
+int render_enabled = 1;
 
 int cherry_time = 0;
 time_t cherry_start_time;
@@ -75,6 +88,17 @@ int px = 2, py = 2;
 Point ghost1_target, ghost2_target, ghost3_target;
 
 int ghost1_has_target = 0, ghost2_has_target = 0, ghost3_has_target = 0;
+
+// --- 서버 모드용 소켓/클라이언트 관리 ---
+#define MAX_CLIENTS 2
+#define DEFAULT_PORT 5000
+
+typedef struct {
+    int fd;
+    int player_id;
+} Client;
+
+Client clients[MAX_CLIENTS];
 
 
 
@@ -337,6 +361,36 @@ int prompt_quit() {
     }
 }
 
+int set_nonblock(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1) return -1;
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) return -1;
+    return 0;
+}
+
+void process_client_input(int player_id, int keycode) {
+    // 단일 플레이어만 처리 (P1)
+    if (player_id != 1) return;
+    handle_input(keycode);
+}
+
+void send_state_to_clients() {
+    char buf[256];
+    int len = snprintf(buf, sizeof(buf),
+        "STATE %d %d %d %d %d %d %d %d %d %d %d %d\n",
+        tick, pacman.x, pacman.y,
+        ghost1.x, ghost1.y,
+        ghost2.x, ghost2.y,
+        ghost3.x, ghost3.y,
+        score, remaining_food, cherry_time);
+
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].fd >= 0) {
+            send(clients[i].fd, buf, len, 0);
+        }
+    }
+}
+
 void run_single_player() {
     init_global_state();
     input_map();
@@ -584,6 +638,7 @@ void handle_input(int ch){
 
 void draw_ghost(Position ghost)
 {
+    if (!render_enabled) return;
     if (cherry_time) {
         attron(COLOR_PAIR(2));
         mvprintw(ghost.y, ghost.x, "a");
@@ -774,8 +829,132 @@ void check_cherry_time()
 
 }
 
+void run_server(int port) {
+    int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd < 0) {
+        perror("socket");
+        exit(1);
+    }
+    int opt = 1;
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    set_nonblock(listen_fd);
 
-int main() {
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(port);
+
+    if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        close(listen_fd);
+        exit(1);
+    }
+    if (listen(listen_fd, MAX_CLIENTS) < 0) {
+        perror("listen");
+        close(listen_fd);
+        exit(1);
+    }
+
+    for (int i = 0; i < MAX_CLIENTS; i++) { clients[i].fd = -1; clients[i].player_id = i + 1; }
+
+    init_global_state();
+    input_map();
+    init_game();
+    render_enabled = 0; // headless
+
+    while (!game_over) {
+        tick = !tick;
+
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(listen_fd, &rfds);
+        int maxfd = listen_fd;
+
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i].fd >= 0) {
+                FD_SET(clients[i].fd, &rfds);
+                if (clients[i].fd > maxfd) maxfd = clients[i].fd;
+            }
+        }
+
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 80000; // 80ms 틱
+
+        int rv = select(maxfd + 1, &rfds, NULL, NULL, &tv);
+        if (rv < 0 && errno != EINTR) {
+            perror("select");
+        }
+
+        // 새 클라이언트 수락
+        if (FD_ISSET(listen_fd, &rfds)) {
+            struct sockaddr_in caddr;
+            socklen_t clen = sizeof(caddr);
+            int cfd = accept(listen_fd, (struct sockaddr*)&caddr, &clen);
+            if (cfd >= 0) {
+                set_nonblock(cfd);
+                for (int i = 0; i < MAX_CLIENTS; i++) {
+                    if (clients[i].fd < 0) {
+                        clients[i].fd = cfd;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 입력 처리
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i].fd >= 0 && FD_ISSET(clients[i].fd, &rfds)) {
+                char buf[32];
+                ssize_t n = recv(clients[i].fd, buf, sizeof(buf), 0);
+                if (n <= 0) {
+                    close(clients[i].fd);
+                    clients[i].fd = -1;
+                } else {
+                    for (ssize_t k = 0; k < n; k++) {
+                        process_client_input(clients[i].player_id, buf[k]);
+                    }
+                }
+            }
+        }
+
+        if (pause_flag) { paused = !paused; pause_flag = 0; }
+        if (quit_flag) { game_over = 1; }
+        if (paused) { send_state_to_clients(); continue; }
+
+        ghost1_move();
+        ghost2_move();
+        ghost3_move();
+        check_cherry_time();
+        move_pacman();
+
+        resolve_collision(&ghost1, 12, 9, &ghost1_has_target);
+        resolve_collision(&ghost2, 17, 9, &ghost2_has_target);
+        resolve_collision(&ghost3, 12, 10, &ghost3_has_target);
+        check_win();
+
+        send_state_to_clients();
+    }
+
+    // 종료 통지
+    const char *end_msg = "END GameOver\n";
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].fd >= 0) send(clients[i].fd, end_msg, strlen(end_msg), 0);
+    }
+    close(listen_fd);
+}
+
+
+int main(int argc, char *argv[]) {
+    if (argc > 1 && strcmp(argv[1], "--server") == 0) {
+        int port = (argc > 2) ? atoi(argv[2]) : DEFAULT_PORT;
+        srand(time(NULL));
+        signal(SIGINT, sig_handler);
+        signal(SIGTSTP, sig_handler);
+        run_server(port);
+        return 0;
+    }
     srand(time(NULL));
     signal(SIGINT, sig_handler); // 종료 시그널
     signal(SIGTSTP, sig_handler); // 일시정지 시그널
