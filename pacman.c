@@ -18,6 +18,9 @@ void draw_pacman();
 void move_pacman();
 void handle_input(int ch);
 void end_game(const char *message);
+void init_food_count();
+void try_eat_tile(int y, int x);
+void check_win();
 void end_ncurses();
 void ghost1_move();
 void ghost2_move();
@@ -60,6 +63,7 @@ int cherry_time = 0;
 time_t cherry_start_time;
 Point cherries[4] = { {1, 2}, {27, 2}, {1, 14}, {27, 14} };
 int cherry_eaten[4] = {0, 0, 0, 0};
+int remaining_food = 0;
 
 volatile sig_atomic_t quit_flag = 0;
 volatile sig_atomic_t pause_flag = 0;
@@ -176,6 +180,7 @@ void init_global_state() {
 
     cherry_time = 0;
     for (int i = 0; i < 4; i++) cherry_eaten[i] = 0;
+    remaining_food = 0;
 }
 
 void init_ncurses() {
@@ -243,6 +248,7 @@ void input_map()
             }
         }
     }
+    init_food_count();
 }
 
 void draw_food() {
@@ -271,6 +277,29 @@ void draw_food() {
 void draw_map() {
     for (int i = 0; i < HEIGHT; i++) { mvprintw(i, 0, "%s", map[i]); }
     draw_food();
+}
+
+void init_food_count() {
+    remaining_food = 0;
+    for (int i = 0; i < HEIGHT; i++) {
+        for (int j = 0; j < WIDTH; j++) {
+            if (food_check[i][j] == 1) remaining_food++;
+        }
+    }
+}
+
+void try_eat_tile(int y, int x) {
+    if (food_check[y][x] == 1) {
+        score++;
+        remaining_food--;
+        food_check[y][x] = 0;
+    }
+}
+
+void check_win() {
+    if (remaining_food <= 0) {
+        end_game("You Win!");
+    }
 }
 
 void draw_status()
@@ -309,8 +338,8 @@ int prompt_quit() {
 }
 
 void run_single_player() {
-    input_map();
     init_global_state();
+    input_map();
     init_game();
 
     while (!game_over) {
@@ -358,6 +387,7 @@ void run_single_player() {
         resolve_collision(&ghost1, 12, 9, &ghost1_has_target);
         resolve_collision(&ghost2, 17, 9, &ghost2_has_target);
         resolve_collision(&ghost3, 12, 10, &ghost3_has_target);
+        check_win();
 
         refresh();
         usleep(80000);
@@ -367,8 +397,8 @@ void run_single_player() {
 }
 
 void run_two_player() {
-    input_map();
     init_global_state();
+    input_map();
     init_game();
 
     Position pacman2 = { pacman.x + 1, pacman.y }; // P2 시작 위치
@@ -429,6 +459,7 @@ void run_two_player() {
                 pacman2.y = next_y;
             }
         }
+        check_win();
 
         refresh();
         usleep(80000);
@@ -516,7 +547,7 @@ void move_pacman() {
         py = pacman.y;
     }
 
-    if(food_check[py][px] == 1) score++;
+    try_eat_tile(py, px);
 
     for (int k = 0; k < 4; k++) {
         if (!cherry_eaten[k] && pacman.x == cherries[k].x && pacman.y == cherries[k].y)
@@ -628,7 +659,7 @@ void ghost1_move()
     ghost1.x = next_pos.x;
     ghost1.y = next_pos.y;
 
-    resolve_collision(&ghost1, 12, 9, &ghost1_has_target);
+    //resolve_collision(&ghost1, 12, 9, &ghost1_has_target);
     // 유령 그리기 (색/문자는 draw_ghost가 처리)
     draw_ghost(ghost1);
 }
@@ -679,7 +710,7 @@ void ghost2_move()
     ghost2.x = next_pos.x;
     ghost2.y = next_pos.y;
 
-    resolve_collision(&ghost2, 17, 9, &ghost2_has_target);
+    //resolve_collision(&ghost2, 17, 9, &ghost2_has_target);
     draw_ghost(ghost2);
 }
 
@@ -727,7 +758,7 @@ void ghost3_move()
     ghost3.x = next_pos.x;
     ghost3.y = next_pos.y;
 
-    resolve_collision(&ghost3, 12, 10, &ghost3_has_target);
+    //resolve_collision(&ghost3, 12, 10, &ghost3_has_target);
     draw_ghost(ghost3);
 }
 
