@@ -19,6 +19,8 @@
 
 #define HEIGHT 20
 #define WIDTH 29
+#define WIN_FOOD_TARGET 204
+#define FLEE_MIN_DIST2 64  // 체리 타임 시 이 거리^2 이상 떨어진 위치를 우선 선택
 
 #define MAX_CLIENTS 2
 #define DEFAULT_PORT 5001
@@ -107,6 +109,8 @@ void init_food_count() {
             if (food_check[i][j] == 1) remaining_food++;
         }
     }
+    // 목표 클리어 개수로 덮어씀
+    remaining_food = WIN_FOOD_TARGET;
 }
 
 void input_map() {
@@ -192,6 +196,51 @@ Point get_random_target() {
     }
 }
 
+// 체리 타임: 팩맨으로부터 가장 멀리 떨어진 곳을 고른다 (동률이면 랜덤 타이)
+Point get_far_target_from_pac(Point pac) {
+    int best_dist = -1;
+    Point best = {pac.x, pac.y};
+    int candidates = 0;
+    int best_dist_far = -1;
+    Point best_far = {pac.x, pac.y};
+    int candidates_far = 0;
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            if (map[y][x] == '#' || map[y][x] == '_' || map[y][x] == '-' || map[y][x] == '|')
+                continue;
+            int dx = x - pac.x;
+            int dy = y - pac.y;
+            int dist = dx*dx + dy*dy;
+            // 최소 거리 이상인 후보 우선
+            if (dist >= FLEE_MIN_DIST2) {
+                if (dist > best_dist_far) {
+                    best_dist_far = dist;
+                    best_far.x = x; best_far.y = y;
+                    candidates_far = 1;
+                } else if (dist == best_dist_far) {
+                    candidates_far++;
+                    if (rand() % candidates_far == 0) {
+                        best_far.x = x; best_far.y = y;
+                    }
+                }
+            }
+            // 전체 최장 거리(폴백)
+            if (dist > best_dist) {
+                best_dist = dist;
+                best.x = x; best.y = y;
+                candidates = 1;
+            } else if (dist == best_dist) {
+                candidates++;
+                if (rand() % candidates == 0) {
+                    best.x = x; best.y = y;
+                }
+            }
+        }
+    }
+    // 우선: 일정 거리 이상 떨어진 최장 후보, 없으면 전체 최장
+    return (best_dist_far >= 0) ? best_far : best;
+}
+
 void try_eat_tile(int y, int x) {
     if (food_check[y][x] == 1) {
         score++;
@@ -252,13 +301,13 @@ void check_cherry_time() {
 
 void ghost1_move() {
     resolve_collision(&ghost1, 12, 9, &ghost1_has_target);
-    if (tick % 5 != 0) return;
+    if (tick % 4 != 0) return; // 약간 빠르게
     Point ghost_pos = {ghost1.x, ghost1.y};
     Point pacman_pos = {pacman.x, pacman.y};
     Point next_pos;
     if (cherry_time) {
         if (!ghost1_has_target || (ghost1.x == ghost1_target.x && ghost1.y == ghost1_target.y)) {
-            ghost1_target = get_random_target();
+            ghost1_target = get_far_target_from_pac(pacman_pos);
             ghost1_has_target = 1;
         }
         next_pos = get_next_move_bfs(ghost_pos, ghost1_target);
@@ -277,13 +326,13 @@ void ghost1_move() {
 
 void ghost2_move() {
     resolve_collision(&ghost2, 17, 9, &ghost2_has_target);
-    if (tick % 5 != 1) return;
+    if (tick % 4 != 1) return; // 약간 빠르게
     Point ghost_pos = {ghost2.x, ghost2.y};
     Point pacman_pos = {pacman.x, pacman.y};
     Point next_pos;
     if (cherry_time) {
         if (!ghost2_has_target || (ghost2.x == ghost2_target.x && ghost2.y == ghost2_target.y)) {
-            ghost2_target = get_random_target();
+            ghost2_target = get_far_target_from_pac(pacman_pos);
             ghost2_has_target = 1;
         }
         next_pos = get_next_move_bfs(ghost_pos, ghost2_target);
@@ -308,7 +357,7 @@ void ghost3_move() {
     Point next_pos;
     if (cherry_time) {
         if (!ghost3_has_target || (ghost3.x == ghost3_target.x && ghost3.y == ghost3_target.y)) {
-            ghost3_target = get_random_target();
+            ghost3_target = get_far_target_from_pac(pacman_pos);
             ghost3_has_target = 1;
         }
         next_pos = get_next_move_bfs(ghost_pos, ghost3_target);
@@ -411,7 +460,8 @@ void run_server(int port) {
                 if (clients[i].fd > maxfd) maxfd = clients[i].fd;
             }
         }
-        struct timeval tv = {0, 80000};
+        // 틱을 느리게 하기 위해 대기 시간 증가 (약 150ms)
+        struct timeval tv = {0, 150000};
         int rv = select(maxfd + 1, &rfds, NULL, NULL, &tv);
         if (rv < 0 && errno != EINTR) perror("select");
 

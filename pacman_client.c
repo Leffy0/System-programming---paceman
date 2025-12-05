@@ -13,6 +13,10 @@
 int sock;
 
 typedef struct {
+    int x, y;
+} Point;
+
+typedef struct {
     int tick;
     int pac_x, pac_y;
     int g1_x, g1_y;
@@ -31,6 +35,9 @@ volatile int state_ready = 0;
 int curses_initialized = 0;
 
 char map_data[HEIGHT][WIDTH + 2];
+int food_grid[HEIGHT][WIDTH + 2];
+Point cherries[4] = { {1, 2}, {27, 2}, {1, 14}, {27, 14} };
+int cherry_eaten[4] = {0, 0, 0, 0};
 
 // 맵은 서버가 안 보내주므로 로컬 map.txt에서 읽음
 void load_map()
@@ -53,6 +60,21 @@ void load_map()
     }
 
     fclose(f);
+
+    // 서버와 동일한 규칙으로 음식 배치
+    for (int i = 0; i < HEIGHT; i++) {
+        for (int j = 0; j < WIDTH + 1; j++) {
+            food_grid[i][j] = 0;
+            if (map_data[i][j] == '#') {
+                food_grid[i][j] = 2;  // 벽
+            } else if (map_data[i][j] == ' ') {
+                if (((4 < i && i < 11) && (9 < j && j < 19)) || (i == 9 && !(j == 8 || j == 20)))
+                    food_grid[i][j] = 0; // 고스트 하우스 내부
+                else
+                    food_grid[i][j] = 1; // 먹이
+            }
+        }
+    }
 }
 
 void init_ncurses()
@@ -121,6 +143,13 @@ void handle_state_line(const char *line)
         state.cherry_time    = cherry_time;
         state.paused         = paused;
         // game_over는 서버가 END로 알려주므로 여기선 건들지 않음
+        if (pac_y >= 0 && pac_y < HEIGHT && pac_x >= 0 && pac_x < WIDTH + 1)
+            food_grid[pac_y][pac_x] = 0; // 클라이언트에서도 먹은 자리는 지움
+        for (int i = 0; i < 4; i++) {
+            if (pac_x == cherries[i].x && pac_y == cherries[i].y) {
+                cherry_eaten[i] = 1;
+            }
+        }
         state_ready = 1;
         pthread_mutex_unlock(&lock);
     }
@@ -199,6 +228,22 @@ void draw_game()
         mvprintw(i, 0, "%s", map_data[i]);
     }
 
+    // 먹이 그리기 (벽이나 문자 위에는 덮어쓰지 않음)
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            if (food_grid[y][x] == 1 && map_data[y][x] == ' ') {
+                mvprintw(y, x, ".");
+            }
+        }
+    }
+
+    // 체리 표시 (안 먹은 것만)
+    for (int i = 0; i < 4; i++) {
+        if (!cherry_eaten[i]) {
+            mvprintw(cherries[i].y, cherries[i].x, "%%");
+        }
+    }
+
     // 플레이어 그리기
     attron(COLOR_PAIR(3));
     if (state.cherry_time)
@@ -275,14 +320,28 @@ int main(int argc, char *argv[])
     while (1) {
         int ch = getch();
         if (ch != ERR) {
-            unsigned char key = (unsigned char)ch;
+            int send_key = -1;
+
+            switch (ch) {
+                case KEY_UP:    send_key = 'w'; break;
+                case KEY_DOWN:  send_key = 's'; break;
+                case KEY_LEFT:  send_key = 'a'; break;
+                case KEY_RIGHT: send_key = 'd'; break;
+                default:
+                    if (ch >= 0 && ch <= 0xFF)
+                        send_key = ch;
+                    break;
+            }
 
             // 키를 1바이트 그대로 보냄
             // 서버는 w a s d p, 그리고 0x03만 사용
-            if (write(sock, &key, 1) <= 0) {
-                endwin();
-                perror("write");
-                exit(1);
+            if (send_key != -1) {
+                unsigned char key = (unsigned char)send_key;
+                if (write(sock, &key, 1) <= 0) {
+                    endwin();
+                    perror("write");
+                    exit(1);
+                }
             }
 
             // 로컬에서 q 누르면 그냥 클라이언트 종료
