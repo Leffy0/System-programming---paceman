@@ -28,6 +28,7 @@ typedef struct {
 ClientState state;
 pthread_mutex_t lock;
 volatile int state_ready = 0;
+int curses_initialized = 0;
 
 char map_data[HEIGHT][WIDTH + 2];
 
@@ -71,6 +72,8 @@ void init_ncurses()
         init_pair(3, COLOR_YELLOW,COLOR_BLACK);   // 플레이어
         init_pair(4, COLOR_GREEN, COLOR_BLACK);   // 필요시 추가 용도
     }
+
+    curses_initialized = 1;
 }
 
 // 한 줄을 파싱해서 state 갱신
@@ -90,7 +93,7 @@ void handle_state_line(const char *line)
     // 포맷:
     // STATE tick pac_x pac_y g1x g1y g2x g2y g3x g3y score remaining_food cherry_time paused
     int n = sscanf(line,
-                   "%15s %d %d %d %d %d %d %d %d %d %d %d %d",
+                   "%15s %d %d %d %d %d %d %d %d %d %d %d %d %d",
                    tag,
                    &tick,
                    &pac_x, &pac_y,
@@ -183,8 +186,11 @@ void *recv_thread_func(void *arg)
 
 void draw_game()
 {
-    if (!state_ready)
+    if (!state_ready) {
+        mvprintw(0, 0, "Waiting for server state...");
+        refresh();
         return;
+    }
 
     pthread_mutex_lock(&lock);
 
@@ -225,6 +231,8 @@ void draw_game()
 
 void error_handling(const char *msg)
 {
+    if (curses_initialized)
+        endwin();
     fputs(msg, stderr);
     fputc('\n', stderr);
     exit(1);
