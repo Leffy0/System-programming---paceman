@@ -13,11 +13,15 @@
 #include <unistd.h>
 #include <sys/select.h>
 
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+
 #define HEIGHT 20
 #define WIDTH 29
 
 #define MAX_CLIENTS 2
-#define DEFAULT_PORT 5000
+#define DEFAULT_PORT 5001
 
 typedef struct { int x, y; } Point;
 typedef struct { int x, y; } Position;
@@ -208,14 +212,21 @@ int resolve_collision(Position *ghost, int respawn_x, int respawn_y, int *has_ta
 }
 
 void move_pacman() {
-    int next_x = pacman.x, next_y = pacman.y;
-    if (pacman.x == 1 && pacman.y == 9) next_x = 28;
-    if (pacman.x == 28 && pacman.y == 9) next_x = 1;
-    switch (dir) {
-        case UP: next_y--; break;
-        case DOWN: next_y++; break;
-        case LEFT: next_x--; break;
-        case RIGHT: next_x++; break;
+    int next_x = pacman.x;
+    int next_y = pacman.y;
+
+    // 터널(포탈) 처리: 터널 위치에서 좌우로 이동할 때만 양 끝으로 순간 이동
+    if (pacman.y == 9 && pacman.x == 1 && dir == LEFT) {
+        next_x = 28;
+    } else if (pacman.y == 9 && pacman.x == 28 && dir == RIGHT) {
+        next_x = 1;
+    } else {
+        switch (dir) {
+            case UP:    next_y--; break;
+            case DOWN:  next_y++; break;
+            case LEFT:  next_x--; break;
+            case RIGHT: next_x++; break;
+        }
     }
     if (next_x < 0 || next_x >= WIDTH || next_y < 0 || next_y >= HEIGHT) return;
     if (map[next_y][next_x] == ' ' || map[next_y][next_x] == '|') {
@@ -291,7 +302,7 @@ void ghost2_move() {
 
 void ghost3_move() {
     resolve_collision(&ghost3, 12, 10, &ghost3_has_target);
-    if (tick != 0) return;
+    if (tick % 2 != 0) return;
     Point ghost_pos = {ghost3.x, ghost3.y};
     Point pacman_pos = {pacman.x, pacman.y};
     Point next_pos;
@@ -344,7 +355,13 @@ void send_state_to_clients() {
         ghost3.x, ghost3.y,
         score, remaining_food, cherry_time, paused);
     for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (clients[i].fd >= 0) send(clients[i].fd, buf, len, 0);
+        if (clients[i].fd >= 0) {
+            ssize_t s = send(clients[i].fd, buf, len, MSG_NOSIGNAL);
+            if (s < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                close(clients[i].fd);
+                clients[i].fd = -1;
+            }
+        }
     }
 }
 
@@ -357,7 +374,7 @@ void send_state_to_client(int fd) {
         ghost2.x, ghost2.y,
         ghost3.x, ghost3.y,
         score, remaining_food, cherry_time, paused);
-    send(fd, buf, len, 0);
+    send(fd, buf, len, MSG_NOSIGNAL);
 }
 
 void run_server(int port) {
@@ -382,7 +399,7 @@ void run_server(int port) {
     init_game();
 
     while (!game_over) {
-        tick = !tick;
+        tick++;
 
         fd_set rfds;
         FD_ZERO(&rfds);
@@ -404,10 +421,21 @@ void run_server(int port) {
             int cfd = accept(listen_fd, (struct sockaddr *)&caddr, &clen);
             if (cfd >= 0) {
                 set_nonblock(cfd);
+                int stored = 0;
                 for (int i = 0; i < MAX_CLIENTS; i++) {
-                    if (clients[i].fd < 0) { clients[i].fd = cfd; break; }
+                    if (clients[i].fd < 0) {
+                        clients[i].fd = cfd;
+                        stored = 1;
+                        break;
+                    }
                 }
-                send_state_to_client(cfd);
+                if (stored) {
+                    send_state_to_client(cfd);
+                } else {
+                    const char *full_msg = "END ServerFull\n";
+                    send(cfd, full_msg, strlen(full_msg), MSG_NOSIGNAL);
+                    close(cfd);
+                }
             }
         }
 
@@ -416,10 +444,17 @@ void run_server(int port) {
             if (clients[i].fd >= 0 && FD_ISSET(clients[i].fd, &rfds)) {
                 char buf[64];
                 ssize_t n = recv(clients[i].fd, buf, sizeof(buf), 0);
-                if (n <= 0) {
-                    close(clients[i].fd); clients[i].fd = -1;
-                } else {
+                if (n > 0) {
                     for (ssize_t k = 0; k < n; k++) process_client_input(clients[i].player_id, buf[k]);
+                } else if (n == 0) {
+                    close(clients[i].fd);
+                    clients[i].fd = -1;
+                } else { // n < 0
+                    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                        continue;
+                    }
+                    close(clients[i].fd);
+                    clients[i].fd = -1;
                 }
             }
         }
@@ -450,6 +485,7 @@ int main(int argc, char *argv[]) {
     srand(time(NULL));
     signal(SIGINT, sig_handler);
     signal(SIGTSTP, sig_handler);
+    signal(SIGPIPE, SIG_IGN);
     run_server(port);
     return 0;
 }
