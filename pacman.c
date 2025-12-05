@@ -4,9 +4,14 @@
 #include <unistd.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdio.h>
+#include <fcntl.h>
 
 #define HEIGHT 20
 #define WIDTH 29
+
+SCREEN* scr1 = NULL;
+SCREEN* scr2 = NULL;
 
 void init_game();
 void sig_handler(int sig);
@@ -16,6 +21,7 @@ void move_pacman();
 void handle_input();
 void end_game(const char *message);
 
+
 typedef struct { int x, y; } Point;
 
 Point queue[1000];
@@ -23,12 +29,10 @@ int front = 0;
 int rear = 0;
 
 void enqueue(Point p) { queue[rear++] = p; }
-
 Point dequeue() { return queue[front++]; }
-
 bool is_empty() { return front == rear; }
-
 void reset_queue() { front = rear = 0; }
+
 
 typedef struct
 { int x,y; }Position;
@@ -260,6 +264,52 @@ void init_game() {
     ghost1_has_target = 0;
     ghost2_has_target = 0;
     ghost3_has_target = 0;
+}
+
+void init_two_term(const char* tty_path)
+{
+    // 터미널 1 초기화
+    initscr();
+    scr1 = stdscr; // 나중에 다시 돌아오기 위해 저장
+
+    // 두 번째 터미널 인자가 없으면
+    if (tty_path == NULL) {
+        scr2 = NULL;
+        return;
+    }
+
+    int fd = open(tty_path, O_RDWR | O_NOCTTY);
+    if (fd < 0) {
+        perror("open tty2");
+        scr2 = NULL;
+        return;
+    }
+
+    FILE* f = fdopen(fd, "r+");
+    if (!f) {
+        perror("fdopen");
+        close(fd);
+        scr2 = NULL;
+        return;
+    }
+
+    // 스크린2 생성
+    scr2 = newterm(getenv("TERM"), f, f);
+    if (!scr2) {
+        perror("newterm");
+        fclose(f);
+        scr2 = NULL;
+        return;
+    }
+
+    // 스크린2 기본 설정
+    set_term(scr2);
+    noecho();
+    curs_set(FALSE);
+    timeout(50);
+
+    // 다시 스크린1로
+    set_term(scr1);
 }
 
 void end_game(const char *message){
@@ -560,49 +610,82 @@ void check_cherry_time()
     }
 }
 
-int main() {
-    input_map();
-
-    initscr();
+void setup_screen_common()
+{
+    set_term(scr1);
     cbreak();
     noecho();
     curs_set(FALSE);
     keypad(stdscr, TRUE);
-
     timeout(50);
 
     if (has_colors()) {
         start_color();
         use_default_colors();
-        init_pair(1, COLOR_RED,  COLOR_BLACK); // 평소 유령
-        init_pair(2, COLOR_CYAN, COLOR_BLACK); // 체리타임 유령
+        init_pair(1, COLOR_RED,  COLOR_BLACK);
+        init_pair(2, COLOR_CYAN, COLOR_BLACK);
     }
 
     srand(time(NULL));
-    signal(SIGINT,  sig_handler); // 종료 시그널
-    signal(SIGTSTP, sig_handler); // 일시정지 시그널
+    signal(SIGINT,  sig_handler);
+    signal(SIGTSTP, sig_handler);
 
-    init_game();   // non-blocking 입력
+    init_game();
+}
 
-    while(!game_over)
+void game_single()
+{
+    // 1: curses 초기화 (여기서만!)
+    initscr();
+    cbreak();
+    noecho();
+    curs_set(FALSE);
+    keypad(stdscr, TRUE);
+    timeout(50);
+
+    if (has_colors())
+    {
+        start_color();
+        use_default_colors();
+        init_pair(1, COLOR_RED,  COLOR_BLACK);
+        init_pair(2, COLOR_CYAN, COLOR_BLACK);
+    }
+
+    srand(time(NULL));
+    signal(SIGINT,  sig_handler);
+    signal(SIGTSTP, sig_handler);
+
+    init_game();
+
+    while (!game_over)
     {
         tick = !tick;
+
         draw_map();
-        if (quit_flag) {
-            mvprintw(HEIGHT / 2, (WIDTH / 2) - 14, "Are you sure you want to quit? (y/n):");
+
+        if (quit_flag)
+        {
+            mvprintw(HEIGHT / 2, (WIDTH / 2) - 14,
+                     "Are you sure you want to quit? (y/n):");
             refresh();
             timeout(-1);
             char c = getch();
-            timeout(100);
+            timeout(50);
             flushinp();
-            if (c == 'y' || c == 'Y') { end_game("Terminated by user."); }
+            if (c == 'y' || c == 'Y') {
+                end_game("Terminated by user.");
+            }
             quit_flag = 0;
         }
-        if (pause_flag) {
+
+        if (pause_flag)
+        {
             paused = !paused;
             pause_flag = 0;
         }
-        if(paused){
+
+        if (paused)
+        {
             clear();
             draw_pacman();
             ghost1_move();
@@ -610,12 +693,13 @@ int main() {
             ghost3_move();
             draw_status();
             mvprintw(HEIGHT / 2, (WIDTH / 2) - 5, "== PAUSED ==");
-            mvprintw(HEIGHT / 2 + 1, (WIDTH / 2) - 12, "Press 'p' or Ctrl+Z to resume");
+            mvprintw(HEIGHT / 2 + 1, (WIDTH / 2) - 12,
+                     "Press 'p' or Ctrl+Z to resume");
             refresh();
-            handle_input(); // 일시정지 해제
+            handle_input();
             continue;
-
         }
+
         clear();
         draw_map();
         draw_pacman();
@@ -626,16 +710,128 @@ int main() {
         check_cherry_time();
         handle_input();
 
-        if(!paused){
-            move_pacman();
-        }
+        if (!paused) { move_pacman(); }
 
-        if(score == 257) game_over = 1;
+        if (score == 257) game_over = 1;
 
         refresh();
         usleep(80000);
     }
 
     end_game("Game Over!");
+}
+
+void game_multi(const char* tty2_path)
+{
+    // 터미널1 + 터미널2 초기화
+    init_two_term(tty2_path);
+
+    setup_screen_common();  // 공통 세팅
+
+    while (!game_over)
+    {
+        tick = !tick;
+
+        draw_map();
+
+        if (quit_flag) {
+            mvprintw(HEIGHT / 2, (WIDTH / 2) - 14,
+                     "Are you sure you want to quit? (y/n):");
+            refresh();
+            timeout(-1);
+            char c = getch();
+            timeout(50);
+            flushinp();
+            if (c == 'y' || c == 'Y') {
+                end_game("Terminated by user.");
+            }
+            quit_flag = 0;
+        }
+
+        if (pause_flag) {
+            paused = !paused;
+            pause_flag = 0;
+        }
+
+        if (paused) {
+            clear();
+            draw_pacman();
+            ghost1_move();
+            ghost2_move();
+            ghost3_move();
+            draw_status();
+            mvprintw(HEIGHT / 2, (WIDTH / 2) - 5, "== PAUSED ==");
+            mvprintw(HEIGHT / 2 + 1, (WIDTH / 2) - 12,
+                     "Press 'p' or Ctrl+Z to resume");
+            refresh();
+            handle_input();
+            continue;
+        }
+
+        clear();
+        draw_map();
+        draw_pacman();
+        ghost1_move();
+        ghost2_move();
+        ghost3_move();
+        draw_status();
+        check_cherry_time();
+        handle_input();
+
+        if (!paused) {
+            move_pacman();
+        }
+
+        if (score == 257) game_over = 1;
+
+        // 터미널 1 화면
+        refresh();
+
+        // 터미널2에 화면복제
+        if (scr2 != NULL) {
+            set_term(scr2);
+            clear();
+            draw_map();
+            draw_pacman();
+            draw_ghost(ghost1);
+            draw_ghost(ghost2);
+            draw_ghost(ghost3);
+            draw_status();
+            refresh();
+            set_term(scr1);   // 다시 입력용 터미널1으로
+        }
+
+        usleep(80000);
+    }
+
+    end_game("Game Over!");
+}
+
+int main(int argc, char* argv[])
+{
+    input_map();
+
+    int mode = 0;
+    printf("1: Single Player\n");
+    printf("2: Multi (mirror to second TTY)\n");
+    printf("Select mode: ");
+    scanf(" %d", &mode);
+
+    if (mode == 1) {
+        // 1인용: 두 번째 터미널 안 씀
+        game_single();
+    }
+    else if (mode == 2) {
+        if (argc < 2) {
+            fprintf(stderr, "Usage: %s 2 /dev/pts/번호\n", argv[0]);
+            return 1;
+        }
+        game_multi(argv[1]);
+    }
+    else {
+        printf("Invalid mode.\n");
+        return 0;
+    }
+
     return 0;
 }
