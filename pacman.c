@@ -77,7 +77,6 @@ Point ghost1_target, ghost2_target, ghost3_target;
 int ghost1_has_target = 0, ghost2_has_target = 0, ghost3_has_target = 0;
 
 
-
 Point get_next_move_bfs(Point ghost, Point target) {
     // 시작과 목표가 같으면 부모 경로가 없으니 바로 반환
     if (ghost.x == target.x && ghost.y == target.y) {
