@@ -206,7 +206,7 @@ void *recv_thread_func(void *arg)
             else if (strncmp(buf, "FOOD", 4) == 0) {
                 int row = -1;
                 char cells[WIDTH + 2];
-                if (sscanf(buf, "FOOD %d %31s", &row, cells) == 2) {
+                if (sscanf(buf, "FOOD %d %30s", &row, cells) == 2) {
                     if (row >= 0 && row < HEIGHT) {
                         pthread_mutex_lock(&lock);
                         for (int x = 0; x < WIDTH && cells[x]; x++) {
