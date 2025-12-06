@@ -19,7 +19,7 @@
 
 #define HEIGHT 20
 #define WIDTH 29
-#define WIN_FOOD_TARGET 204
+#define WIN_FOOD_TARGET 206
 #define FLEE_MIN_DIST2 64  // 체리 타임 시 이 거리^2 이상 떨어진 위치를 우선 선택
 
 #define MAX_CLIENTS 2
@@ -42,6 +42,7 @@ int score = 0;
 int paused = 0;
 int food_check[HEIGHT][WIDTH + 2];
 int tick = 0;
+int win_flag = 0;
 
 int cherry_time = 0;
 time_t cherry_start_time;
@@ -117,7 +118,7 @@ void init_food_count()
             if (food_check[i][j] == 1) remaining_food++;
 
     // 목표 클리어 개수로 덮어씀
-    remaining_food = WIN_FOOD_TARGET;
+    // remaining_food = WIN_FOOD_TARGET;
 }
 
 
@@ -448,6 +449,7 @@ void ghost3_move() {
 void check_win() {
     if (remaining_food <= 0) {
         game_over = 1;
+        win_flag = 1;
     }
 }
 
@@ -486,11 +488,20 @@ void process_client_input(int player_id, int keycode) {
 
 void send_state_to_clients() {
     char buf[256];
+
+    int p2x = pacman2.x;
+    int p2y = pacman2.y;
+    if(game_mode == MODE_SINGLE)
+    {
+        p2x = -1;
+        p2y = -1;
+    }
+
     int len = snprintf(buf, sizeof(buf),
                        "STATE %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
                        tick,
                        pacman.x,  pacman.y,   // p1
-                       pacman2.x, pacman2.y,  // p2
+                       p2x, p2y,  // p2
                        ghost1.x, ghost1.y,
                        ghost2.x, ghost2.y,
                        ghost3.x, ghost3.y,
@@ -509,11 +520,21 @@ void send_state_to_clients() {
 
 void send_state_to_client(int fd) {
     char buf[256];
+
+    int p2x = pacman2.x;
+    int p2y = pacman2.y;
+
+    if (game_mode == MODE_SINGLE) {
+        p2x = -1;
+        p2y = -1;
+    }
+
+
     int len = snprintf(buf, sizeof(buf),
                        "STATE %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
                        tick,
                        pacman.x,  pacman.y,
-                       pacman2.x, pacman2.y,
+                       p2x, p2y,
                        ghost1.x, ghost1.y,
                        ghost2.x, ghost2.y,
                        ghost3.x, ghost3.y,
@@ -622,7 +643,11 @@ void run_server(int port) {
     }
 
     const char *end_msg = "END GameOver\n";
-    for (int i = 0; i < MAX_CLIENTS; i++) if (clients[i].fd >= 0) send(clients[i].fd, end_msg, strlen(end_msg), 0);
+
+    if(win_flag) { end_msg = "END GameClear\n"; }
+
+    for (int i = 0; i < MAX_CLIENTS; i++)
+        if (clients[i].fd >= 0) send(clients[i].fd, end_msg, strlen(end_msg), 0);
     close(listen_fd);
 }
 
