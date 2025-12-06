@@ -23,7 +23,7 @@
 #define FLEE_MIN_DIST2 64  // 체리 타임 시 이 거리^2 이상 떨어진 위치를 우선 선택
 
 #define MAX_CLIENTS 2
-#define DEFAULT_PORT 5001
+#define DEFAULT_PORT 5000
 
 typedef struct { int x, y; } Point; //가야할곳
 typedef struct { int x, y; } Position; //위치
