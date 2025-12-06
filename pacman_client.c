@@ -251,13 +251,18 @@ void draw_game()
 
     // 1P
     attron(COLOR_PAIR(3));
-    mvprintw(state.p1_y, state.p1_x, state.cherry_time ? "C" : "c");
+    if(state.tick % 2 == 0) { mvprintw(state.p1_y, state.p1_x,"C"); }
+    else { mvprintw(state.p1_y, state.p1_x, "c"); }
     attroff(COLOR_PAIR(3));
 
     // 2P
-    attron(COLOR_PAIR(4));
-    mvprintw(state.p2_y, state.p2_x, state.cherry_time ? "Q" : "q");
-    attroff(COLOR_PAIR(4));
+    if((state.p2_x >= 0 && state.p2_x < WIDTH) && (state.p2_y >= 0 && state.p2_y < HEIGHT))
+    {
+        attron(COLOR_PAIR(4));
+        if(state.tick % 2 == 0) { mvprintw(state.p2_y, state.p2_x, "c"); }
+        else { mvprintw(state.p2_y, state.p2_x, "C"); }
+        attroff(COLOR_PAIR(4));
+    }
 
     // 유령
     int ghost_color = state.cherry_time ? 2 : 1;
@@ -293,13 +298,14 @@ int main(int argc, char *argv[])
     struct sockaddr_in serv_addr;
     pthread_t rcv_thread;
 
-    if (argc != 2) {
+    if (argc != 2)
+    {
         printf("Usage : %s <PlayerID 1 or 2>\n", argv[0]);
         return 1;
     }
 
-    int my_id = atoi(argv[1]);  // 지금 프로토콜상 서버에 직접 보내진 않지만, 필요하면 나중에 씀
-    (void)my_id;                // 사용 안 한다고 경고 안 뜨게
+    int my_id = atoi(argv[1]);
+    (void)my_id;
 
     memset(&state, 0, sizeof(state));
     pthread_mutex_init(&lock, NULL);
