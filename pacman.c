@@ -376,16 +376,22 @@ void process_client_input(int player_id, int keycode) {
 void send_state_to_clients() {
     char buf[256];
     int len = snprintf(buf, sizeof(buf),
-        "STATE %d %d %d %d %d %d %d %d %d %d %d %d\n",
-        tick, pacman.x, pacman.y,
-        ghost1.x, ghost1.y,
-        ghost2.x, ghost2.y,
-        ghost3.x, ghost3.y,
-        score, remaining_food, cherry_time);
+                       "STATE %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+                       tick,
+                       pacman.x,  pacman.y,   // p1
+                       pacman2.x, pacman2.y,  // p2
+                       ghost1.x, ghost1.y,
+                       ghost2.x, ghost2.y,
+                       ghost3.x, ghost3.y,
+                       score, remaining_food, cherry_time, paused);
 
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (clients[i].fd >= 0) {
-            send(clients[i].fd, buf, len, 0);
+            ssize_t s = send(clients[i].fd, buf, len, MSG_NOSIGNAL);
+            if (s < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                close(clients[i].fd);
+                clients[i].fd = -1;
+            }
         }
     }
 }
